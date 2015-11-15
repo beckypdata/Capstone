@@ -1,0 +1,43 @@
+---
+title: "Capstone-Read JSON"
+output:
+  html_document: default
+  pandoc_args:
+  - +RTS
+  - -K512m
+  - -RTS
+  pdf_document: default
+  word_document: default
+geometry: margin=2cm
+---
+
+```{r loadlibrary}
+library(doParallel)
+registerDoParallel(cores=3)
+library(jsonlite)
+```
+
+```{r readfiles}
+tips <- stream_in(file("yelp_academic_dataset_tip.json"),verbose=FALSE)
+bus <- stream_in(file("yelp_academic_dataset_business.json"),verbose=FALSE)
+checkin <- stream_in(file("yelp_academic_dataset_checkin.json"),verbose=FALSE)
+review <- stream_in(file("yelp_academic_dataset_review.json"),verbose=FALSE)
+users <- stream_in(file("yelp_academic_dataset_user.json"),verbose=FALSE)
+```
+
+```{r flatfiles}
+tips <- flatten(tips,recursive=TRUE)
+bus <- flatten(bus,recursive=TRUE)
+checkin <- flatten(checkin,recursive=TRUE)
+users <- flatten(users,recursive=TRUE)
+review <- flatten(review,recursive=TRUE)
+```
+
+```{r savefiles}
+saveRDS(tips, file="tips.rds")
+saveRDS(bus, file="bus.rds")
+saveRDS(checkin, file="checkin.rds")
+saveRDS(users, file="users.rds")
+saveRDS(review, file="review.rds")
+```
+
