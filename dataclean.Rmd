@@ -1,0 +1,103 @@
+---
+title: "Capstone-Data Clean"
+output:
+  html_document: default
+  pandoc_args:
+  - +RTS
+  - -K512m
+  - -RTS
+  pdf_document: default
+  word_document: default
+geometry: margin=2cm
+---
+
+```{r loadlibrary}
+library(doParallel)
+registerDoParallel(cores=3)
+library(dplyr)
+library(stringi)
+library(stringr)
+library(data.table)
+library(stringdist)
+```
+
+```{r readfiles}
+bus <- readRDS("bus.rds")
+```
+
+```{r evaldata}
+bus2 <- data.table(location=bus$state,areas=bus$city,hood=bus$neighborhoods)[order(location,areas,increasing=TRUE),] 
+unique(data.frame(bus2))
+```
+
+```{r dataclean}
+bus$location[bus$state=="PA"] <- "Pittsburgh"
+bus$location[bus$state %in% c("NC","SC")] <- "Charlotte"
+bus$location[bus$state=="WI"] <- "Madison"
+bus$location[bus$state=="IL"] <- "Urbana-Champaign"
+bus$location[bus$state=="AZ"] <- "Phoenix"
+bus$location[bus$state=="NV"] <- "Las Vegas"
+bus$location[bus$state=="QC"] <- "Montreal"
+bus$location[bus$state=="ON"] <- "Waterloo"
+bus$location[bus$state %in% c("EDH","MLN","FIF","ELN","XGL","KHL","HAM","SCB","NTH")] <- "Edinburgh"
+bus$location[bus$state %in% c("BW","RP","NW")] <- "Karlsruhe"
+bus$location <- ifelse(bus$city=="Las Vegas"&bus$state=="NC","Las Vegas",bus$location)
+bus$location[bus$state %in% c("WA","CA","MN","MA","OR")] <- "Invalid"
+bus$location <- ifelse(bus$city=="London","Invalid",bus$location)
+bus <- bus[bus$location!="Invalid",]
+
+s1 <- stri_list2matrix(bus$neighborhoods)
+bus$hood <- stri_list2matrix(bus$neighborhoods)[1,]
+bus$areas <- ifelse(!is.na(bus$hood),str_trim(bus$hood),str_trim(bus$city))
+bus$areas <- ifelse(!printable_ascii(bus$areas),stri_trans_general(bus$areas,"Latin-ASCII"),bus$areas)
+bus$areas <- gsub("Nb","N B",bus$areas)
+bus$areas <- gsub("Ft[.]*[ ]+","Fort ",bus$areas)
+bus$areas <- gsub("^N[. ]+","North ",bus$areas)
+bus$areas <- gsub("^E[. ]+| E "," East ",bus$areas)
+bus$areas <- gsub("^W[. ]+| W "," West ",bus$areas)
+bus$areas <- gsub("^C[. ]","Central ",bus$areas)
+bus$areas <- gsub("[.]*[ -][lL]aurent","-Laurent",bus$areas)
+bus$areas <- gsub("^Saint[ ]+|St[.]+ ","St ",bus$areas)
+bus$areas <- gsub("^Point[e]*[ ]+","Pointe-",bus$areas)
+bus$areas <- gsub("Ann[e]*[-]+","Anne-",bus$areas)
+bus$areas <- gsub("St[e]*[-]+","Saint-",bus$areas)
+bus$areas <- gsub("^Mount[ ]+|Mt\\. ","Mt ",bus$areas)
+bus$areas <- gsub("-[dD]e-","-De-",bus$areas)
+bus$areas <- ifelse(grepl("Nellis",bus$areas),"Nellis AFB",bus$areas)
+sareas <- list(c("phoenix","Phoenix"),c("las vegas","Las Vegas"),c("charlotte","Charlotte"),c("pittsburgh","Pittsburgh"),c("fountain hills","Fountain Hills"),c("nellis afb","Nellis AFB"),c("mcfarland","McFarland"),c("deforest","DeForest"),c("dollard-des ormeaux","Dollard-Des-Ormeaux"),c("green tree","Green Tree"),c("mckees rocks","McKees Rocks"),c("bellevue","Bellevue"),c("matthews","Matthews"),c("chandler","Chandler"))
+for (x in sareas) bus$areas <- ifelse(!stringdist(x[1],tolower(bus$areas),method="soundex"),x[2],bus$areas)
+bus$areas <- ifelse(grepl("Edinburgh City",bus$areas),"Edinburgh",bus$areas)
+bus$areas <- gsub("Scotland","Edinburgh",bus$areas)
+bus$areas <- ifelse(grepl("City of Edinburgh",bus$areas),"Edinburgh",bus$areas)
+bus$areas <- gsub("Last Vegas","Las Vegas",bus$areas)
+bus$areas <- gsub(", NV [0-9]{5}","",bus$areas)
+bus$areas <- ifelse(grepl("([0-9])",bus$areas),bus$location,bus$areas)
+bus$areas <- gsub("Phoenix-Ahwatukee","Ahwatukee",bus$areas)
+bus$areas <- gsub("Glendale Az","Glendale",bus$areas)
+bus$areas <- gsub("Scottdale","Scottsdale",bus$areas)
+bus$areas <- ifelse(grepl("Scottsdale, Phoenix",bus$areas),"Scottsdale",bus$areas)
+bus$areas <- gsub("Fort Mcdowell","Fort McDowell",bus$areas)
+bus$areas <- gsub("Fort mill","Fort Mill",bus$areas)
+bus$areas <- gsub("Henderston","Henderson",bus$areas)
+bus$areas <- gsub("Lasalle","LaSalle",bus$areas)
+bus$areas <- ifelse(grepl("Deux-Montagnes",bus$areas),"Deux-Montagnes",bus$areas)
+bus$areas <- ifelse(grepl("Surprise",bus$areas),"Surprise Crossing",bus$areas)
+bus$areas <- ifelse(grepl("Charlotte (University)",bus$areas),"University",bus$areas)
+bus$areas <- gsub("University City","University",bus$areas)
+bus$areas <- gsub("Pittsburgh/S. Hills Galleria","S. Hills Galleria",bus$areas)
+bus$areas <- gsub("Pittsburgh/Waterfront","Waterfront",bus$areas)
+bus$areas <- ifelse(bus$location==bus$areas,paste0("Metro ",bus$location),bus$areas)
+
+bus$eat <- ifelse (grepl("Restaurants|Bars",bus$categories), TRUE, FALSE) 
+```
+
+```{r evaldata2}
+bus2 <- data.table(location=bus$location,areas=bus$areas) 
+bus2 <- bus2[order(location,areas),]
+unique(data.frame(bus2))
+```
+
+
+```{r writedata}
+saveRDS(bus, file="busclean.rds")
+```
