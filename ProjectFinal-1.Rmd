@@ -1,0 +1,298 @@
+---
+title: "Yelp Dataset Challenge - Location, Location, Location"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  pandoc_args:
+  - +RTS
+  - -K512m
+  - -RTS
+  html_document: default
+  word_document: default
+geometry: margin=2cm
+---
+
+## Title
+
+This report covers the methods applied in a detailed analysis of the Yelp Dataset Challenge, and summarizes the results obtained through that analysis. All data cleaning and analysis were completed using R in Rmd files.  Links to the report Rmd files are included throughout this report providing access to all steps taken for purposes of reproducing results.
+
+
+## Introduction
+
+
+The [Yelp Dataset Challenge website](http://www.yelp.com/dataset_challenge) provides access to user review data from 10 cities in 4 countries.  Data represents numerous categories of businesses from restaurants to doctors to universities along with user provided reviews and tips.  The Yelp Challenge is not to answer a posed question by Yelp, but rather to explore the data, determine interesting questions that could be answered by the data, and then complete detailed analysis for one of those questions.
+
+The specific question posed by this report is a Yelp centric interpretation of the often stated "location, location, location".  *Does Yelp restaurant rating vary by the city or neighborhood location of the business?*  The answer to this question could prove meaningful to individuals planning to start a new restaurant, to city planners, or to travelers identifying key areas to stay within an unknown city.  While the results provided will be specific to reviews provided by Yelp users, the analysis approach could be repeated for non-Yelp business review data sources. 
+
+
+## Methods and Data
+
+
+```{r loadlibrary,message=FALSE,warning=FALSE,echo=FALSE}
+library(doParallel)
+registerDoParallel(cores=3)
+library(dplyr)
+library(data.table)
+library(stringi)
+library(ggplot2); library(grid)
+library(pgirmess)
+library(captioner)
+library(knitr)
+library(gridExtra)
+
+table_nums <- captioner(prefix="Table")
+l_cap <- table_nums(name="lmean",caption="Summary of Review Data by City")
+k_cap <- table_nums(name="lkwt",caption="Kruskal-Wallis Test of Null Hypothesis, Restaurant Review Ranks Are Same Across Cities")
+ak_cap <- table_nums(name="lkwta",caption="Kruskal-Wallis Test of Null Hypothesis, Restaurant Review Ranks Are Same Across Phoenix Neighborhoods")
+lm_cap <- table_nums(name="llm",caption="lm(stars~location) ANOVA for Cities")
+alm_cap <- table_nums(name="alm",caption="lm(stars~areas) ANOVA for Phoenix Neighborhoods")
+fig_nums <- captioner()
+rh_cap <- fig_nums(name="revhist",caption="Density Histogram of Restaurant Ratings by City")
+rb_cap <- fig_nums(name="revbox",caption="Boxplot Comparing City Restaurant Ratings")
+arb_cap <- fig_nums(name="arevbox",caption="Boxplot Comparing Phoenix Neighborhood Restaurant Ratings (abbreviated list)")
+arc_cap <- fig_nums(name="rclust",caption="Neighborhood Clustering of High Rated Restaurants")
+```
+
+
+```{r readfiles,echo=FALSE}
+bus <- readRDS("busclean.rds")
+review <- readRDS("review.rds")
+resdf <- readRDS("rsdt.rds")
+nresdf <- readRDS("nres.rds")
+RSDT <- data.table(resdf)
+RSDTL <- data.table(readRDS("rsdtl.rds"))
+RSDTS <- data.table(readRDS("rsdts.rds"))
+```
+
+
+#### Data Cleaning:
+
+
+The Yelp data is provided in 5 separate JSON datasets: business, user, review, check-in, and tip.  Details related to specific data elements can be obtained from the Yelp web site; detailed information related to the various business categories can be found on [Yelp site](https://www.yelp.com/developers/documentation/v2/all_category_list). 
+
+[R source Rmd](https://github.com/beckypdata/Capstone/blob/master/jsonread.Rmd) was used to read in the original JSON data, and flatten data into usable R dataframes.  That data was written to RDS files to reduce steps needed in subsequent data analysis by repeated reading/parsing of the original JSON files.
+
+According to the Yelp website, the Challenge dataset was gathered from reviews in 10 cities across 4 countries.  U.K.: Edinburgh; Germany: Karlsruhe; Canada: Montreal and Waterloo; US: Pittsburgh, Charlotte, Urbana-Champaign, Phoenix, Las Vegas, Madison.  An examination of the business dataset cities revealed substantially more than 10 cities in the challenge data than Yelp documentation indicated. 
+
+As a result, it was necessary to clean the data prior to analysis to ensure alignment to the original list of 10 cities.  The data cleaning was accomplished using [Rmd file](https://github.com/beckypdata/Capstone/blob/master/dataclean.Rmd) to identify unique state names within the dataset.  Visual examination of the city/state associations determined how best to align to the 10 Yelp cities. When the dataset "state" aligned to the state for one of the US cities, all entries for that state were associated with the comparable city from the Yelp list.  For non-US cities, this association was not as clean.  Many different state entries existed for the 1 UK city, Edinburgh.  In this scenario, the unique city/state combinations produced from R code were used for visual lookup in Mapquest to identify geographic proximity to one of the non-US cities in the list of 10.  Similar assessment was completed for US states that were not anticipated in the list, thus SC entries mapped to Charlotte, NC.  In some cases, if proximity to the 10 cities could not be established, the data was deemed invalid.  This was true for business entries in Enterprise, OR and Seattle, WA.  
+
+Once correct city/state combinations were identified, R code was used to systemically bucket each entry to the original 10 cities with a new column "location" that ensured no corruption of the original data.  
+
+As the stated assessment question involves looking deeper into neighborhood areas within those 10 cities, data cleaning was needed to establish appropriate area locations.  For each business, an additional location indicator "neighborhood" was provided in the JSON data.  Not all business entities provided this additional level of detail.  Some of those that did listed multiple neighborhood entries for a specific business.  For the purpose of analysis, a business was deemed to be in only one neighborhood.  A new column "areas" was introduced pulling the first occurrence of neighborhood for businesses.  As not all entries contained neighborhood values, an additional step was needed to fully populate the new column.  Dataset entries in "city" on visual inspection often proved to be communities or neighborhoods within the larger metro areas.  These dataset city values were used to complete the "areas" column when neighborhood was not specified.  
+
+Some cities had non-English character sets due to their foreign locations; these were replaced with English equivalents.  Leading and trailing spaces were removed.  Common abbreviations were replaced to provide consistency in names.  Some names required further cleaning as in some cases street addresses were in the city field, and some names were close approximations to others or slight miss-spellings of the correct name.  If the city and the location name were identical, a decision was made to commonly pre-pend "Metro" to the city location to indicate a broader location area.
+
+The final data cleaning step introduced a new column "eat" with value TRUE for those businesses that were either restaurants or bars based on values in the "categories" column.
+
+
+#### Analytic Methods:
+
+
+Following data cleaning, a quick assessment was done to determine 1) total number of restaurant reviews available 2) number reviews within specific locations/areas 3) total number of restaurant reviews within a given location/area 4) number of businesses located in multiple locations or areas.  The review data was joined in [Rmd file](https://github.com/beckypdata/Capstone/blob/master/dataprep.Rmd) with business data filtered to only those businesses with "eat" value of TRUE.  This resulted in a usable dataset for restaurant reviews which was subsequently grouped and counted for the groupings stated above.
+
+
+```{r evaldata,echo=FALSE}
+resdflab <- count(resdf, location, areas, business_id, sort = TRUE)
+resdfbla <- count(resdf, business_id, location, areas, sort = TRUE)
+nresdflab <- count(nresdf, location, areas, business_id, sort = TRUE)
+nresdfbla <- count(nresdf, business_id, location, areas, sort = TRUE)
+```
+
+
+```{r evaldata3,echo=FALSE}
+resdfla <- count(resdflab, location, areas)
+nresdfla <- count(nresdflab, location, areas)
+```
+
+
+A total of `r nrow(resdflab)` restaurants out of `r nrow(bus)` business population from the cleaned dataset were available for detailed review analysis with a minimal number `r sprintf("%.2f",nrow(resdflab[resdflab$n==1,])/nrow(resdflab)*100)`% having only 1 review available.  Of the original `r nrow(bus)` businesses in the cleaned dataset, `r NROW(bus$business_id[!bus$business_id %in% review$business_id])` had no review entries, and were excluded from further analysis.  There were `r sprintf("%2d",nrow(resdfbla)-uniqueN(resdfbla$business_id))` restaurants located in multiple locations or areas.  The mean number of reviews per restaurant was `r sprintf("%.2f",mean(resdflab$n))`.
+
+A total of `r nrow(resdfla)` location/area grouped reviews were available for subsequent detailed analysis. Of these locations, `r sprintf("%.2f",nrow(resdfla[resdfla$n==1,])/nrow(resdfla)*100)`% had only 1 restaurant review.  The mean number of restaurant reviews per location/area was `r sprintf("%.2f",mean(resdfla$n))`.
+
+Prior to utilization of statistical tests to compare city/location restaurant review results, normality of data was evaluated.  Summary statistics (min, max, mean, median, sd) were calculated within each location and location/area grouping.  A histogram grouping review results by city location was created and overlaid with normal curve using the calculated mean and sd.
+
+
+`r fig_nums("revhist")`
+```{r plotstars,echo=FALSE,fig.width=5,fig.height=2,fig.align='center'}
+ggplot(RSDT, aes(x=stars,fill=..x..)) + 
+    geom_histogram(aes(y=..density..), binwidth=.5,
+                   color="steelblue") + geom_line(aes(x=vals,y=norm),colour="red") + facet_wrap(~location,nrow=2) + theme(legend.position="none") + theme(axis.text=element_text(size=6),axis.title=element_text(size=6),strip.text = element_text(size=5)) + labs(x="Review Ratings by Location (star ranking 1-5)",y="Density")
+
+grid.rect(.5,.5,width=unit(1,"npc"), height=unit(1,"npc"),
+          gp=gpar(lwd=1, fill=NA, col="black"))
+```
+
+
+
+First glance indicated no variation by city location.  Initial reaction was clearly Yelp users lean toward high review ratings, and that pattern seemed consistent across all cities.  Some difference was observed specific to Edinburgh and Montreal with higher peaks on the superimposed normal curve.  Phoenix and Las Vegas had noticaebly higher occurrences of 5 star ratings.  
+
+A table of the previously calculated summary values by city was produced to further evaluate review differences between cities.  The table was sorted in descending mean order.
+
+
+
+```{r lmnsd,echo=FALSE}
+kable(data.frame(RSDTL))
+```
+
+`r table_nums("lmean")`
+xxzz
+
+Median restaurant rating for all cities was 4 stars which was visually confirmed by the histogram heavy density in the 4 and 5 star categories.  There was no immediate evidence through mean and sd of substantial differences between the populations. 
+
+
+#### Statistical Inference:
+
+
+Given the large quantities of reviews available for each city, it might have seemed reasonable to use pairwise t-tests for evaluating if rating differences exist between cities.  However, due to the obvious skewing to the right for all cities, and the fact that the measured variable "stars" is an ordinal variable related to the nominal variable "location", the non-parametric Kruskal-Wallis with significance level .05 was leveraged.  This test is relevant in a scenario where populations cannot be assumed normal, and rank comparison of measured value to nominal value is needed.  
+
+A p-value less than .05 would lead to rejection of the null hypothesis "mean ranks are the same" across all cities.  If null hypothesis was rejected, additional analysis would be needed to conclude which cities.  For that subsequent analysis post-hoc Kruskal-Wallis multiple comparison tests at .05 significance level were utilized.  Use of multiple comparison tests removes risk of Type I errors that can occur with repeating individual pairwise tests.  Test output from the multiple comparison notes each possible pairing of city and indicates if null hypothesis would be rejected.
+
+Reformatting of the Kruskal-Wallis multiple comparison test output split paired cities into separate location columns.  The calculated rating mean for each location was added to the table for evaluation purposes.  Kruskal-Wallis is a mean sum rank test; "star" ratings are by definition rankings so the mean of the "stars" variable within each city represents the mean sum rank for that city.  The better city within each pairing was determined by comparing the rating mean for each paired city in noted significant differences.  A count was produced as to number of times that city was deemed "better".  For the list of cities identified as "better", a percent of all "better" occurrences was then calculated to create a tiering structure for preferred individual cities.  Cities which were not identified as "better" in any pairings were by definition placed in tier 1.  The tiering results were leveraged in conjunction with the original restaurant review data for each city.  A boxplot of reviews by city was produced reflecting these tiers.  
+
+To answer question as to whether review ratings vary by location within city, full statistical inference with Kruskal-Wallis tests was repeated for restaurant reviews grouped within areas of a given city.  For brevity in this report, the approach was applied to evaluate neighborhoods for only one of the higher rated cities. The developed process could be easily applied to other cities as needed.  An abbreviated boxplot version was produced reflecting those locations within selected city that had higher tiers.
+
+Final step in the analysis built a simplified model to determine if city or city/area combination could be used to predict review rating.  
+
+
+## Results
+
+
+#### Statistical Inference:  
+  
+  
+At .05 significance level, a p-value of 2.2e-16 resulted in rejection of the null hypothesis that "mean ranks are the same" across cities.  The conclusion was that a difference exists in ranked restaurant ratings between cities.  
+
+
+`r table_nums("lkwt")`
+```{r stattests,echo=FALSE}
+kruskal.test(stars~factor(location),data=RSDT)
+```
+
+
+```{r stattests2,echo=FALSE}
+KC <- kruskalmc(stars~factor(location),data=RSDT)
+row.names(KC$dif.com)<-gsub("Urbana-Champaign","UrbanaChampaign",row.names(KC
+$dif.com))
+KCs <- stri_list2matrix(strsplit(row.names(KC$dif.com),"-"))
+KCs[,] <- gsub("UrbanaChampaign","Urbana-Champaign",KCs[,])
+KCDT <- data.table(location1=KCs[1,],location2=KCs[2,],diff=KC$dif.com$difference)
+KCDT$mean1 <- merge(KCDT,select(RSDTL, location, mean),by.x="location1",by.y="location")$mean
+KCDT$mean2 <- merge(KCDT,select(RSDTL, location, mean),by.x="location2",by.y="location")$mean
+KCDT$bcty <- ifelse (KCDT$diff,ifelse(KCDT$mean1>=KCDT$mean2,KCDT$location1,KCDT$location2),"None")
+KCDT <- KCDT[KCDT$diff,list(better=.N),by=list(bcty)]
+KCDT$pct <- as.numeric(sprintf("%.2f",KCDT$better/nrow(KCDT)*100))
+RSDT$Lpct <- KCDT$pct[match(RSDT$location,KCDT$bcty)]
+RSDT <- RSDT[,Ltier:=ifelse(RSDT$Lpct>=80,5,ifelse(RSDT$Lpct>=60,4,ifelse(RSDT$Lpct>=40,3,ifelse(RSDT$Lpct>=20,2,1))))]
+RSDT$Ltier[is.na(RSDT$Ltier)] <- 1
+RSDT$Ltier <- as.factor(RSDT$Ltier)
+levels(RSDT$Ltier) <- c("Non-preferred","Bronze","Silver","Gold","Platinum")
+KCDT <- KCDT[order(pct,decreasing=TRUE),]
+```
+
+
+The following boxplot summarizes the cities with associated tier levels deemed better as a result of the post-hoc Kruskal-Wallis multiple comparison tests.  The highest tier includes Phoenix and Montreal.
+
+
+`r fig_nums("revbox")`
+```{r plotstars3,echo=FALSE,fig.width=5, fig.height=2,fig.align='center'}
+cols <- c("darkseagreen","#CD7F32","#C0C0C0","#FFD700","#E5E4E2")
+ggplot(data=RSDT, aes(y=stars,x=factor(location),"Tier Compared Other Locations"=Ltier,fill="Tier Compared Other Locations")) + 
+  scale_fill_manual(values=cols) + geom_boxplot(aes(fill=Ltier,color="brown")) + 
+  scale_colour_identity() + coord_flip() + 
+  theme(axis.text=element_text(size=6),axis.title=element_text(size=6),legend.text = element_text(size=5),legend.title = element_text(size=5)) + 
+  labs(x="City Location",y="Restaurant Ratings (star ranking 1-5)")
+
+grid.rect(.5,.5,width=unit(1,"npc"), height=unit(1,"npc"),
+          gp=gpar(lwd=1, fill=NA, col="black"))
+```
+
+
+The null hypothesis was rejected at .05 significance level with p-value of 2.2e-16 for Phoenix city neighborhoods that "mean ranks are the same" across neighborhoods.  The conclusion was that a difference exists in ranked restaurant ratings between neighborhoods.  
+  
+  
+`r table_nums("lkwta")`
+```{r stattests4,echo=FALSE}
+kruskal.test(stars~factor(areas),data=RSDT[location=="Phoenix"])
+```
+
+
+```{r stattests5,echo=FALSE}
+KC<-kruskalmc(stars~factor(areas),data=RSDT[location=="Phoenix"])
+KCs <- stri_list2matrix(strsplit(row.names(KC$dif.com),"-"))
+KCDT <- data.table(location="Phoenix",area1=KCs[1,],area2=KCs[2,],diff=KC$dif.com$difference)
+KCDT$mean1 <- merge(KCDT,select(RSDTS, location, areas, mean),by.x=c("location","area1"),by.y=c("location","areas"))$mean
+KCDT$mean2 <- merge(KCDT,select(RSDTS, location, areas, mean),by.x=c("location","area2"),by.y=c("location","areas"))$mean
+KCDT$barea <- ifelse (KCDT$diff,ifelse(KCDT$mean1>=KCDT$mean2,KCDT$area1,KCDT$area2),"None")
+KCDT <- KCDT[KCDT$diff,list(better=.N),by=list(barea)]
+KCDT$pct <- as.numeric(sprintf("%.2f",KCDT$better/nrow(KCDT)*100))
+RSDT$Apct <- KCDT$pct[match(RSDT$areas,KCDT$barea)]
+RSDT <- RSDT[,Atier:=ifelse(RSDT$Apct>=40,5,ifelse(RSDT$Apct>=30,4,ifelse(RSDT$Apct>=20,3,ifelse(RSDT$Apct>=10,2,1))))]
+RSDT$Atier[is.na(RSDT$Atier)] <- 1
+RSDT$Atier <- as.factor(RSDT$Atier)
+levels(RSDT$Atier) <- c("Non-preferred","Bronze","Silver","Gold","Platinum")
+KCDT <- KCDT[order(pct,decreasing=TRUE),]
+```
+
+
+`r fig_nums("arevbox")`
+```{r plotstars4,echo=FALSE,fig.width=5, fig.height=2,fig.align='center'}
+RSDTP <- RSDT[RSDT$location=="Phoenix" & !(Atier%in%c("Non-preferred","Bronze")),]
+cols <- c("#C0C0C0","#FFD700","#E5E4E2")
+ggplot(data=RSDTP, aes(y=stars,x=factor(areas),"Tier Compared Other Areas"=Atier,fill="Tier Compared Other Areas")) + 
+  scale_fill_manual(values=cols) + geom_boxplot(aes(fill=Atier,color="brown")) + 
+  scale_colour_identity() + coord_flip() + 
+  theme(axis.text=element_text(size=6),axis.title=element_text(size=6),legend.text = element_text(size=5),legend.title = element_text(size=5)) + 
+  labs(x="City Neighborhoods",y="Restaurant Ratings (star ranking 1-5)")
+
+grid.rect(.5,.5,width=unit(1,"npc"), height=unit(1,"npc"),
+          gp=gpar(lwd=1, fill=NA, col="black"))
+```
+
+
+#### Predictive Model Results:  
+
+
+```{r linmod,echo=FALSE}
+fit <- lm(stars~location,data=RSDT)
+```
+ANOVA indicates city as significant in relationship with rating, however, R-squared value of `r sprintf("%.4f",summary(fit)$r.squared)` indicates no measurable linear relationship for purpose of prediction.
+
+
+`r table_nums("llm")`
+```{r linmod2,echo=FALSE}
+anova(fit)
+```
+
+
+```{r linmod3,echo=FALSE}
+fit <- lm(stars~areas,data=RSDT[location=="Phoenix",])
+```
+
+
+ANOVA indicates Phoenix neighborhood as significant in relationship with rating, however, R-squared value of `r sprintf("%.4f",summary(fit)$r.squared)` indicates no measurable linear relationship for purpose of prediction.
+
+
+`r table_nums("alm")`
+```{r linmod4,echo=FALSE}
+fit <- lm(stars~areas,data=RSDT[location=="Phoenix",])
+anova(fit)
+```
+
+
+## Discussion
+
+The question has been answered; location is a critical element related to user reviews of restaurants.  However, as a predictor of rating outcome, the relationship is insufficient for meaningful results.  Additional parameters for inclusion in a predictive model could include indicators of economic health, density of restaurants within the area, or variety of non-restaurant highly rated businesses within the location.  An additional interesting factor for consideration could be the clustering of neighborhoods with high ratings; do the number of high rating neighborhoods in close proximity to restaurant location influence higher ratings.  Locating a new business in a high rated area with lower density could well be stronger business decision.
+
+
+`r fig_nums("rclust")`
+```{r lastplot,echo=FALSE,fig.width=5, fig.height=2,fig.align='center'}
+ggplot(data=RSDTS[mean>3.5,], aes(x=mean,y=factor(location))) + geom_point(aes(colour=areas)) + theme(legend.position="none") +
+theme(axis.text=element_text(size=6),axis.title=element_text(size=6)) + 
+  labs(x="Neighborhood Average Rating",y="Yelp City Locations")
+
+grid.rect(.5,.5,width=unit(1,"npc"), height=unit(1,"npc"),
+          gp=gpar(lwd=1, fill=NA, col="black"))
+```
+
+
+Developing a more detailed model is an effort for another report.  The approach outlined in this analysis does provide a repeatable process for any set of user review data based on ranking.  It is not specific to Yelp data.  As such, it could be leveraged to analyze any category of business as well as sub-categories of restaurants.  
