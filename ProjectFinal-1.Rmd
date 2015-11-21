@@ -1,5 +1,5 @@
 ---
-title: "Yelp Dataset Challenge - Location, Location, Location"
+title: "Location, Location, Location"
 output:
   pdf_document:
     latex_engine: xelatex
