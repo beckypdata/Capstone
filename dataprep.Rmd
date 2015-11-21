@@ -1,5 +1,5 @@
 ---
-title: "Yelp Dataset Challenge - Location, Location, Location"
+title: "Capstone-Data Prep"
 output:
   pdf_document:
     latex_engine: xelatex
