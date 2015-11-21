@@ -1,0 +1,84 @@
+Location, Location, Location
+========================================================
+author: Becky P
+date: `r format(Sys.Date(), format="%B %d %Y")`
+transition: fade
+
+Problem Statement
+========================================================
+type: section
+
+*Does Yelp restaurant rating vary by the city or neighborhood location of the business?* 
+
+<small>Meaningful to:</small>
+- <small>individuals planning to start a new restaurant</small>
+- <small>city planners</small>
+- <small>travelers identifying key areas to stay within an unknown city</small>
+
+Methodology
+========================================================
+type: section
+
+- <small><small>Evaluate Yelp documentation and data</small> </small>     
+    <small><small><small>- JSON datasets: business, user, review, check-in, tip</small></small></small>
+- <small><small>Data cleaning to align to Yelp documentation and join datasets</small></small>     
+    <small><small><small>- 10 cities across 4 countries</small></small></small>
+- <small><small>Evaluation of data distribution for normality</small></small>
+- <small><small>Formulate null hypotheses</small></small>        
+    <small><small><small>- "Restaurant Review Ranks Are Same Across Cities"</small></small></small>
+    <small><small><small>- "Restaurant Review Ranks Are Same Across Neighborhoods"</small></small></small>
+- <small><small>Test(s) null hypotheses; identify location pairings that reject null hypothesis</small></small>
+- <small><small>Evaluate predictive model for rating by location</small></small>
+
+Results
+========================================================
+type: section
+
+```{r loadlibrary,message=FALSE,warning=FALSE,echo=FALSE,strip.white=TRUE,tidy=TRUE}
+library(doParallel)
+registerDoParallel(cores=3)
+library(data.table)
+library(ggplot2); library(grid)
+library(pgirmess)
+library(knitr)
+library(gridExtra)
+
+resdf <- readRDS("rsdt.rds")
+nresdf <- readRDS("nres.rds")
+RSDT <- data.table(resdf)
+RSDTL <- data.table(readRDS("rsdtl.rds"))
+RSDTS <- data.table(readRDS("rsdts.rds"))
+```
+- <small><small>Data is not normally distributed</small></small>
+```{r plotstars,echo=FALSE,fig.width=7,fig.height=3,fig.align='center'}
+ggplot(RSDT, aes(x=stars,fill=..x..)) + 
+    geom_histogram(aes(y=..density..), binwidth=.5,
+                   color="steelblue") + geom_line(aes(x=vals,y=norm),colour="red") + facet_wrap(~location,nrow=2) + theme(legend.position="none") + theme(axis.text=element_text(size=6),axis.title=element_text(size=6),strip.text = element_text(size=5)) + labs(x="Review Ratings by Location (star ranking 1-5)",y="Density")
+
+grid.rect(.5,.5,width=unit(1,"npc"), height=unit(1,"npc"),
+          gp=gpar(lwd=1, fill=NA, col="black"))
+```
+- <small><small>Non-parametric Kruskal-Wallis test of null hypothesis used due to distribution skewing, ordinal variable "stars" and nominal variable "location"</small></small>
+    <small><small><small><small>- difference exists in ranked restaurant ratings between cities, null hypothesis rejected .05 significance</small></small></small></small>
+    <small><small><small><small>- difference exists in ranked restaurant ratings between neighborhoods, null hypothesis rejected .05 significance</small></small></small></small>
+- <small><small>*Conclude:* user ratings vary by location; location is an element to consider in prediction models</small></small>
+    <small><small><small><small>- as a linear predictor of rating outcome, location has weak relationship to ranking`r fit <- lm(stars~location,data=RSDT)` based on R-squared `r sprintf("%.4f", summary(fit)$r.squared)`</small></small></small></small>
+
+What Next
+========================================================
+type: section
+
+- <small><small>Expand predictive models leveraging location as only one parameter</small></small></small>
+    <small><small><small>- enhance model with area economic data, business clustering, density of restaurants; adjacent neighborhood clustering of high rated restaurants</small></small></small>
+```{r lastplot,echo=FALSE,fig.width=9, fig.height=4,fig.align='center'}
+ggplot(data=RSDTS[mean>3.5,], aes(x=mean,y=factor(location))) + geom_point(aes(colour=areas)) + theme(legend.position="none") +
+theme(axis.text=element_text(size=6),axis.title=element_text(size=6)) + 
+  labs(x="Neighborhood Average Rating",y="Yelp City Locations")
+
+grid.rect(.5,.5,width=unit(1,"npc"), height=unit(1,"npc"),
+          gp=gpar(lwd=1, fill=NA, col="black"))
+```
+- <small><small>Create repeatable process for any set of user review data based on ranking</small></small>
+- <small><small>Evaluate other categories of businesses, non-restaurant, using Yelp data</small></small>
+- <small><small>Apply process to non-Yelp rating data</small></small>
+
