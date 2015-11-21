@@ -1,0 +1,72 @@
+---
+title: "Yelp Dataset Challenge - Location, Location, Location"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  pandoc_args:
+  - +RTS
+  - -K512m
+  - -RTS
+  html_document: default
+  word_document: default
+geometry: margin=2cm
+---
+
+## Title
+
+```{r loadlibrary,message=FALSE,warning=FALSE,echo=FALSE}
+library(doParallel)
+registerDoParallel(cores=3)
+library(dplyr)
+library(ggplot2); library(grid)
+library(data.table)
+library(stringi)
+library(pgirmess)
+library(captioner)
+library(knitr)
+library(gridExtra)
+```
+
+```{r readfiles,echo=FALSE}
+bus <- readRDS("busclean.rds")
+review <- readRDS("review.rds")
+```
+
+```{r evaldata,echo=FALSE}
+resdf <- filter(review, business_id %in% bus$business_id[bus$eat]) %>%
+  inner_join(bus,by="business_id") %>%
+  select(business_id,location,areas,rev=text,stars=stars.x) %>%
+  group_by(location,areas)
+nresdf <- filter(review, business_id %in% bus$business_id[!bus$eat]) %>%
+  inner_join(bus,by="business_id") %>%
+  select(business_id,location,areas,rev=text,stars=stars.x) %>%
+  group_by(location,areas)
+```
+
+```{r dataprep,echo=FALSE}
+RSDT <- data.table(resdf)
+RSDT <- RSDT[,Lmean:=mean(stars), by=list(location)]
+RSDT <- RSDT[,Lrvw:=.N, by=list(location)]
+RSDT <- RSDT[,mean:=mean(stars),by=list(location,areas)]
+RSDT <- RSDT[,Arvw:=.N,by=list(location,areas)]
+RSDT$areas <- gsub("-"," ",RSDT$areas)
+RSDT <- RSDT[order(Lmean,decreasing=TRUE),]
+
+RSDTL <- RSDT[,list(min=min(stars),max=max(stars),mean=mean(stars),q25=quantile(stars,.25),median=as.double(median(stars)),q75=quantile(stars,.75),sd=sd(stars),Lrvw=.N), by=list(location)]
+RSDTL <- RSDTL[order(mean,decreasing=TRUE),]
+
+RSDT$vals<-0
+for(i in 1:nrow(RSDTL)){
+    RSDT$vals[RSDT$location==RSDTL$location[i]]<-seq(from=min(RSDT$stars[RSDT$location==RSDTL$location[i]]), to=max(RSDT$stars[RSDT$location==RSDTL$location[i]]),length=length(RSDT$vals[RSDT$location==RSDTL$location[i]]))
+    RSDT$norm[RSDT$location==RSDTL$location[i]]<-dnorm(RSDT$vals[RSDT$location==RSDTL$location[i]],RSDTL$mean[i],RSDTL$sd[i])  
+}
+
+RSDTS <- RSDT[,list(min=min(stars), max=max(stars), mean=mean(stars),q25=quantile(stars,.25),median=as.double(median(stars)), q75=quantile(stars,.75),sd=sd(stars), Arvw=.N), by=list(location,areas)]
+RSDTS <- RSDTS[order(mean,decreasing=TRUE),]
+
+saveRDS(RSDT, file="rsdt.rds")
+saveRDS(RSDTL, file="rsdtl.rds")
+saveRDS(RSDTS, file="rsdts.rds")
+saveRDS(nresdf, file="nres.rds")
+```
+
